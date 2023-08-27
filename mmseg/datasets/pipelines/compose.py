@@ -21,6 +21,7 @@ class Compose(object):
         self.transforms = []
         for transform in transforms:
             if isinstance(transform, dict):
+                print(transform)
                 transform = build_from_cfg(transform, PIPELINES)
                 self.transforms.append(transform)
             elif callable(transform):

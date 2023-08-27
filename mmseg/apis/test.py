@@ -54,7 +54,7 @@ def single_gpu_test(model,
     Returns:
         list: The prediction results.
     """
-
+    print("Single gpu test")
     model.eval()
     results = []
     dataset = data_loader.dataset

@@ -37,7 +37,7 @@ data = dict(
 # Optimizer Hyperparameters
 optimizer_config = None
 optimizer = dict(
-    lr=6e-05,
+    lr=9e-06,
     paramwise_cfg=dict(
         custom_keys=dict(
             head=dict(lr_mult=10.0),
@@ -46,8 +46,8 @@ optimizer = dict(
 n_gpus = 1
 runner = dict(type='IterBasedRunner', max_iters=40000)
 # Logging Configuration
-checkpoint_config = dict(by_epoch=False, interval=40000, max_keep_ckpts=1)
-evaluation = dict(interval=4000, metric='mIoU')
+checkpoint_config = dict(by_epoch=False, interval=2000, max_keep_ckpts=20)
+evaluation = dict(interval=50, metric='mIoU')
 # Meta Information for Result Analysis
 name = 'gta2cs_uda_warm_fdthings_rcs_croppl_a999_daformer_mitb5_s0'
 exp = 'basic'
@@ -57,3 +57,5 @@ name_encoder = 'mitb5'
 name_decoder = 'daformer_sepaspp'
 name_uda = 'dacs_a999_fd_things_rcs0.01_cpl'
 name_opt = 'adamw_6e-05_pmTrue_poly10warm_1x2_40k'
+
+

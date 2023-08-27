@@ -70,6 +70,7 @@ class BaseSegmentor(BaseModule, metaclass=ABCMeta):
                 augs (multiscale, flip, etc.) and the inner list indicates
                 images in a batch.
         """
+        print("Conduct forward test\n")
         for var, name in [(imgs, 'imgs'), (img_metas, 'img_metas')]:
             if not isinstance(var, list):
                 raise TypeError(f'{name} must be a list, but got '
@@ -153,7 +154,8 @@ class BaseSegmentor(BaseModule, metaclass=ABCMeta):
         during val epochs. Note that the evaluation after training epochs is
         not implemented with this method, but an evaluation hook.
         """
-        output = self(**data_batch, **kwargs)
+        print("validation step\n")
+        output = self(**data_batch, return_loss = False, **kwargs)
         return output
 
     @staticmethod

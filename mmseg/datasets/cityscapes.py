@@ -35,6 +35,7 @@ class CityscapesDataset(CustomDataset):
                  img_suffix='_leftImg8bit.png',
                  seg_map_suffix='_gtFine_labelTrainIds.png',
                  **kwargs):
+        print("Init CityscapesDataset:")
         super(CityscapesDataset, self).__init__(
             img_suffix=img_suffix, seg_map_suffix=seg_map_suffix, **kwargs)
 

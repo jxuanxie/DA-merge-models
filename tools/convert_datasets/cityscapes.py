@@ -19,7 +19,6 @@ from PIL import Image
 def convert_json_to_label(json_file):
     label_file = json_file.replace('_polygons.json', '_labelTrainIds.png')
     json2labelImg(json_file, label_file, 'trainIds')
-
     if 'train/' in json_file:
         pil_label = Image.open(label_file)
         label = np.asarray(pil_label)
@@ -78,13 +77,21 @@ def main():
     gt_dir = osp.join(cityscapes_path, args.gt_dir)
 
     poly_files = []
+    cnt = 0
     for poly in mmcv.scandir(gt_dir, '_polygons.json', recursive=True):
+        
+        cnt = cnt + 1
+        
+        if cnt==2525 or cnt ==2526:
+            print(cnt)
+            print(poly)
         poly_file = osp.join(gt_dir, poly)
         poly_files.append(poly_file)
 
     only_postprocessing = False
     if not only_postprocessing:
         if args.nproc > 1:
+            print(args.nproc)
             sample_class_stats = mmcv.track_parallel_progress(
                 convert_json_to_label, poly_files, args.nproc)
         else:
@@ -93,9 +100,9 @@ def main():
     else:
         with open(osp.join(out_dir, 'sample_class_stats.json'), 'r') as of:
             sample_class_stats = json.load(of)
-
+    print("finish postprocessing")
     save_class_stats(out_dir, sample_class_stats)
-
+    print("finish processing")
     split_names = ['train', 'val', 'test']
 
     for split in split_names:

@@ -1,7 +1,7 @@
 # Obtained from: https://github.com/open-mmlab/mmsegmentation/tree/v0.16.0
 # Modifications:
 # - Override palette, classes, and state dict keys
-
+import numpy as np
 import matplotlib.pyplot as plt
 import mmcv
 import torch
@@ -110,6 +110,13 @@ def inference_segmentor(model, img):
     # forward the model
     with torch.no_grad():
         result = model(return_loss=False, rescale=True, **data)
+        '''print(result)
+        numpy_result = np.array(result)
+        print(numpy_result.shape)
+        numpy_result = numpy_result[0, :, :]
+        print(numpy_result.shape)
+        print(numpy_result)
+        np.savetxt("./demo_image.txt", numpy_result)'''
     return result
 
 

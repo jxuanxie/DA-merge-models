@@ -16,7 +16,7 @@ HEADS = MODELS
 LOSSES = MODELS
 SEGMENTORS = MODELS
 UDA = MODELS
-
+DISCRIMINATORS = MODELS
 
 def build_backbone(cfg):
     """Build backbone."""
@@ -37,6 +37,9 @@ def build_loss(cfg):
     """Build loss."""
     return LOSSES.build(cfg)
 
+def build_discriminator(cfg):
+    """Build discriminator"""
+    return DISCRIMINATORS.build(cfg)
 
 def build_train_model(cfg, train_cfg=None, test_cfg=None):
     """Build model."""

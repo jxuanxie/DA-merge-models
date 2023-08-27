@@ -9,7 +9,8 @@ import os
 import subprocess
 import uuid
 from datetime import datetime
-
+os.environ['CUDA_VISIBLE_DEVICES'] = '5'
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '0'
 import torch
 from experiments import generate_experiment_cfgs
 from mmcv import Config, get_git_hash

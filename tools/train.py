@@ -67,6 +67,33 @@ def parse_args(args):
 
     return args
 
+def DA2DecoupledDA(dictionary, old_string, string_1, string_2 = None):
+    new_dict = {}
+    for key, value in dictionary.items():
+        new_key_1 = key.replace(old_string, string_1)
+        new_key_2 = key.replace(old_string, string_2)
+        new_dict[new_key_1] = value
+        new_dict[new_key_2] = value
+
+    return new_dict
+
+def _params_equal(ema_model, model, extra_model=None):
+
+    '''check if the parameters of the ema_model and segmentor model is equal'''
+    if extra_model is not None:
+        params_iter = itertools.chain(model.named_parameters(), extra_model.named_parameters())
+
+    else: 
+        params_iter = model.named_parameters()
+
+    for ema_param, param in zip(ema_model.named_parameters(), 
+                                params_iter):
+        if not torch.equal(ema_param[1].data, param[1].data):
+            print("Difference in", ema_param[0])
+            return False
+        
+    return True
+
 
 def main(args):
     args = parse_args(args)
@@ -143,8 +170,21 @@ def main(args):
     model = build_train_model(
         cfg, train_cfg=cfg.get('train_cfg'), test_cfg=cfg.get('test_cfg'))
     model.init_weights()
+    # print(torch.load('./pretrained/iter_80000.pth'))
+    # model.load_state_dict(torch.load('./pretrained/iter_80000.pth'), False)
+    '''discriminator_dict = torch.load('./pretrained/iter_80000.pth', map_location=torch.device('cpu'))
+    model_dis_dict = discriminator_dict['state_dict']
+    model.load_state_dict(model_dis_dict, False)
+    state_dict = torch.load('./pretrained/latest.pth', map_location=torch.device('cpu'))
+    model_state_dict = state_dict['state_dict']
+    trans_state_dict = DA2DecoupledDA(model_state_dict, "backbone", "source_encoder", "target_encoder")
+    model.load_state_dict(trans_state_dict, False)
+    assert _params_equal(model.model.source_encoder, model.model.target_encoder)
+    # logger.info(f"The type of state dict: { model_state_dict.keys()}")
 
-    logger.info(model)
+    logger.info("load state dict iter_40000.pth\n")'''
+
+    # logger.info(model)
 
     datasets = [build_dataset(cfg.data.train)]
     if len(cfg.workflow) == 2:

@@ -18,4 +18,10 @@ model = dict(
                 dilations=(1, 6, 12, 18),
                 pool=False,
                 act_cfg=dict(type='ReLU'),
-                norm_cfg=norm_cfg))))
+                norm_cfg=norm_cfg))),
+    discriminator1_0 = dict(type='FCDiscriminator', 
+                num_classes=64, 
+                ndf=32),
+    discriminator2 = dict(type='FCDiscriminator', 
+                num_classes=19, 
+                ndf=64))

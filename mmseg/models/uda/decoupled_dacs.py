@@ -1,17 +1,7 @@
-# ---------------------------------------------------------------
-# Copyright (c) 2021-2022 ETH Zurich, Lukas Hoyer. All rights reserved.
-# Licensed under the Apache License, Version 2.0
-# ---------------------------------------------------------------
-
-# The ema model update and the domain-mixing are based on:
-# https://github.com/vikolss/DACS
-# Copyright (c) 2020 vikolss. Licensed under the MIT License.
-# A copy of the license is available at resources/license_dacs
-
 import math
 import os
 import random
-from copy import deepcopy
+from copy import deepcopy, copy
 
 import mmcv
 import numpy as np
@@ -19,22 +9,31 @@ import torch
 from matplotlib import pyplot as plt
 from timm.models.layers import DropPath
 from torch.nn.modules.dropout import _DropoutNd
+import itertools
 
 from mmseg.core import add_prefix
-from mmseg.models import UDA, build_segmentor
-from mmseg.models.uda.uda_decorator import UDADecorator, get_module
+from mmseg.models import UDA, build_segmentor, build_discriminator
+from mmseg.models.uda.decoupled_decorator import DecoupledDecorator, get_module
 from mmseg.models.utils.dacs_transforms import (denorm, get_class_masks,
                                                 get_mean_std, strong_transform)
 from mmseg.models.utils.visualization import subplotimg
 from mmseg.utils.utils import downscale_label_ratio
 
+def _params_equal(ema_model, model, extra_model=None):
 
-def _params_equal(ema_model, model):
-    for ema_param, param in zip(ema_model.named_parameters(),
-                                model.named_parameters()):
+    '''check if the parameters of the ema_model and segmentor model is equal'''
+    if extra_model is not None:
+        params_iter = itertools.chain(model.named_parameters(), extra_model.named_parameters())
+
+    else: 
+        params_iter = model.named_parameters()
+
+    for ema_param, param in zip(ema_model.named_parameters(), 
+                                params_iter):
         if not torch.equal(ema_param[1].data, param[1].data):
-            # print("Difference in", ema_param[0])
+            print("Difference in", ema_param[0])
             return False
+        
     return True
 
 
@@ -49,11 +48,13 @@ def calc_grad_magnitude(grads, norm_type=2.0):
     return norm
 
 
+
+
 @UDA.register_module()
-class DACS(UDADecorator):
+class DecoupledDACS(DecoupledDecorator):
 
     def __init__(self, **cfg):
-        super(DACS, self).__init__(**cfg)
+        super(DecoupledDACS, self).__init__(**cfg)
         self.local_iter = 0
         self.max_iters = cfg['max_iters']
         self.alpha = cfg['alpha']
@@ -76,35 +77,65 @@ class DACS(UDADecorator):
         self.debug_gt_rescale = None
 
         self.class_probs = {}
-        ema_cfg = deepcopy(cfg['model'])
+        ema_cfg = copy(cfg['model'])
+        print("Building ema model EncoderDecoder")
         self.ema_model = build_segmentor(ema_cfg)
 
         if self.enable_fdist:
-            self.imnet_model = build_segmentor(deepcopy(cfg['model']))
+            self.imnet_model = build_segmentor(copy(cfg['model']))
         else:
             self.imnet_model = None
 
+        
     def get_ema_model(self):
         return get_module(self.ema_model)
 
     def get_imnet_model(self):
         return get_module(self.imnet_model)
-
+    
+    
     def _init_ema_weights(self):
+
         for param in self.get_ema_model().parameters():
             param.detach_()
-        mp = list(self.get_model().parameters())
+
+        mp = list(self.get_model().target_encoder.parameters()) + \
+             list(self.get_model().decode_head.parameters())
+        
         mcp = list(self.get_ema_model().parameters())
+
         for i in range(0, len(mp)):
-            if not mcp[i].data.shape:  # scalar tensor
+            # check the data is matched
+            # print(mcp[i].data)
+            if not mcp[i].data.shape:
                 mcp[i].data = mp[i].data.clone()
             else:
-                mcp[i].data[:] = mp[i].data[:].clone()
+                mcp[i].data = mp[i].data[:].clone()
+
+    def _init_ema_weights_source(self):
+
+        for param in self.get_ema_model().parameters():
+            param.detach_()
+
+        mp = list(self.get_model().source_encoder.parameters()) + \
+             list(self.get_model().decode_head.parameters())
+        
+        mcp = list(self.get_ema_model().parameters())
+
+        for i in range(0, len(mp)):
+            # check the data is matched
+            # print(mcp[i].data)
+            if not mcp[i].data.shape:
+                mcp[i].data = mp[i].data.clone()
+            else:
+                mcp[i].data = mp[i].data[:].clone()
 
     def _update_ema(self, iter):
         alpha_teacher = min(1 - 1 / (iter + 1), self.alpha)
+        param_list = itertools.chain(self.get_model().target_encoder.parameters(),
+                                     self.get_model().decode_head.parameters())
         for ema_param, param in zip(self.get_ema_model().parameters(),
-                                    self.get_model().parameters()):
+                                    param_list):
             if not param.data.shape:  # scalar tensor
                 ema_param.data = \
                     alpha_teacher * ema_param.data + \
@@ -113,7 +144,8 @@ class DACS(UDADecorator):
                 ema_param.data[:] = \
                     alpha_teacher * ema_param[:].data[:] + \
                     (1 - alpha_teacher) * param[:].data[:]
-
+                
+    
     def train_step(self, data_batch, optimizer, **kwargs):
         """The iteration step during training.
 
@@ -140,15 +172,18 @@ class DACS(UDADecorator):
                 DDP, it means the batch size on each GPU), which is used for
                 averaging the logs.
         """
+        # mmcv.print_log(f'the length of data_batch {type(data_batch)}')
+        # mmcv.print_log(f'data batch keys {data_batch.keys()}')
         
         optimizer.zero_grad()
         log_vars = self(**data_batch)
         optimizer.step()
-        
+
         log_vars.pop('loss', None)  # remove the unnecessary 'loss'
         outputs = dict(
             log_vars=log_vars, num_samples=len(data_batch['img_metas']))
         return outputs
+    
 
     def masked_feat_dist(self, f1, f2, mask=None):
         feat_diff = f1 - f2
@@ -187,9 +222,15 @@ class DACS(UDADecorator):
             {'loss_imnet_feat_dist': feat_dist})
         feat_log.pop('loss', None)
         return feat_loss, feat_log
+    
 
-    def forward_train(self, img, img_metas, gt_semantic_seg, target_img,
-                      target_img_metas):
+    def forward_train(self,
+                      img,
+                      img_metas,
+                      gt_semantic_seg,
+                      target_img,
+                      target_img_metas,
+                      return_feat=False):
         """Forward function for training.
 
         Args:
@@ -205,6 +246,7 @@ class DACS(UDADecorator):
         Returns:
             dict[str, Tensor]: a dictionary of loss components
         """
+
         log_vars = {}
         batch_size = img.shape[0]
         dev = img.device
@@ -212,14 +254,15 @@ class DACS(UDADecorator):
         # Init/update ema model
         if self.local_iter == 0:
             self._init_ema_weights()
-            # assert _params_equal(self.get_ema_model(), self.get_model())
+            # assert _params_equal(self.get_ema_model(), self.get_model().target_encoder, self.get_model().decode_head)
 
         if self.local_iter > 0:
             self._update_ema(self.local_iter)
-            # assert not _params_equal(self.get_ema_model(), self.get_model())
+            # assert not _params_equal(self.get_ema_model(), self.get_model().target_encoder, self.get_model().decode_head)
             # assert self.get_ema_model().training
-
+        # print(f"{self.local_iter}\n")
         means, stds = get_mean_std(img_metas, dev)
+
         strong_parameters = {
             'mix': None,
             'color_jitter': random.uniform(0, 1),
@@ -230,15 +273,22 @@ class DACS(UDADecorator):
             'std': stds[0].unsqueeze(0)
         }
 
-        # Train on source images
+        # Source Encoder Train on source images
         clean_losses = self.get_model().forward_train(
-            img, img_metas, gt_semantic_seg, return_feat=True)
+            img, img_metas, gt_semantic_seg, return_feat=True, target_encoder=False, target_data=False, mixed_training=False)
         src_feat = clean_losses.pop('features')
         clean_loss, clean_log_vars = self._parse_losses(clean_losses)
         log_vars.update(clean_log_vars)
         clean_loss.backward(retain_graph=self.enable_fdist)
+        # mmcv.print_log(f'source encoder train on source images {clean_loss_src_src}\n')
+        # mmcv.print_log(f'source encoder train on source images {clean_log_vars_src_src}\n')
+
+        
+        
+        
+        # self.print_grad_magnitude = True
         if self.print_grad_magnitude:
-            params = self.get_model().backbone.parameters()
+            params = self.get_model().source_encoder.parameters()
             seg_grads = [
                 p.grad.detach().clone() for p in params if p.grad is not None
             ]
@@ -252,14 +302,60 @@ class DACS(UDADecorator):
             feat_loss.backward()
             log_vars.update(add_prefix(feat_log, 'src'))
             if self.print_grad_magnitude:
-                params = self.get_model().backbone.parameters()
+                params = self.get_model().source_encoder.parameters()
                 fd_grads = [
                     p.grad.detach() for p in params if p.grad is not None
                 ]
                 fd_grads = [g2 - g1 for g1, g2 in zip(seg_grads, fd_grads)]
                 grad_mag = calc_grad_magnitude(fd_grads)
                 mmcv.print_log(f'Fdist Grad.: {grad_mag}', 'mmseg')
+        '''
+        # Target Encoder Train on source images
+        cheat_losses = self.get_model().forward_train(
+            img, img_metas, gt_semantic_seg, return_feat=True, target_encoder=True, target_data=False, mixed_training=False)
+        cheat_feat = cheat_losses.pop('features')
+        cheat_losses = add_prefix(cheat_losses, 'cheat')
+        cheat_loss, cheat_log_vars = self._parse_losses(cheat_losses)
+        log_vars.update(cheat_log_vars)
+        cheat_loss.backward(retain_graph=self.enable_fdist)
+        
+        # self.print_grad_magnitude = True
+        if self.print_grad_magnitude:
+            params = self.get_model().target_encoder.parameters()
+            seg_grads = [
+                p.grad.detach().clone() for p in params if p.grad is not None
+            ]
+            grad_mag = calc_grad_magnitude(seg_grads)
+            mmcv.print_log(f'Seg. Grad.: {grad_mag}', 'mmseg')
 
+        # ImageNet feature distance
+        if self.enable_fdist:
+            feat_loss, feat_log = self.calc_feat_dist(img, gt_semantic_seg,
+                                                      cheat_feat)
+            feat_loss.backward()
+            log_vars.update(add_prefix(feat_log, 'tgt'))
+            if self.print_grad_magnitude:
+                params = self.get_model().target_encoder.parameters()
+                fd_grads = [
+                    p.grad.detach() for p in params if p.grad is not None
+                ]
+                fd_grads = [g2 - g1 for g1, g2 in zip(seg_grads, fd_grads)]
+                grad_mag = calc_grad_magnitude(fd_grads)
+                mmcv.print_log(f'Fdist Grad.: {grad_mag}', 'mmseg')
+        '''
+        # Target Encoder Train on target images
+        # mmcv.print_log("train with target images")
+        target_losses = self.get_model().forward_train(
+            target_img, target_img_metas, gt_semantic_seg=None, return_feat=False, target_encoder=True, target_data=True, mixed_training=False)
+        target_loss, target_loss_vars = self._parse_losses(target_losses)
+        # print(f'{target_loss}\n')
+        # print(f'{target_loss_vars}\n')
+        target_loss.backward(retain_graph=True)
+        log_vars.update(target_loss_vars)
+        # mmcv.print_log(f'target encoder train on target images {target_loss}\n')
+        # mmcv.print_log(f'target encoder train on target images {target_loss_vars}\n')
+        
+        
         # Generate pseudo-label
         for m in self.get_ema_model().modules():
             if isinstance(m, _DropoutNd):
@@ -268,17 +364,10 @@ class DACS(UDADecorator):
                 m.training = False
         ema_logits = self.get_ema_model().encode_decode(
             target_img, target_img_metas)
-        
-        mmcv.print_log(f"ema logits {ema_logits.shape}\n")
 
         ema_softmax = torch.softmax(ema_logits.detach(), dim=1)
-
-        mmcv.print_log(f"ema softmax {ema_softmax.shape}\n")
         pseudo_prob, pseudo_label = torch.max(ema_softmax, dim=1)
-        mmcv.print_log(f"ema pseudo prob {pseudo_prob}\n")
-        mmcv.print_log(f"ema pseudo label {pseudo_label}\n")
         ps_large_p = pseudo_prob.ge(self.pseudo_threshold).long() == 1
-        mmcv.print_log(f"ps large p {ps_large_p}\n")
         ps_size = np.size(np.array(pseudo_label.cpu()))
         pseudo_weight = torch.sum(ps_large_p).item() / ps_size
         pseudo_weight = pseudo_weight * torch.ones(
@@ -309,15 +398,19 @@ class DACS(UDADecorator):
         mixed_img = torch.cat(mixed_img)
         mixed_lbl = torch.cat(mixed_lbl)
 
+
         # Train on mixed images
         mix_losses = self.get_model().forward_train(
-            mixed_img, img_metas, mixed_lbl, pseudo_weight, return_feat=True)
-        mix_losses.pop('features')
+            mixed_img, img_metas, mixed_lbl, pseudo_weight, return_feat=True, target_encoder=True, target_data=True, mixed_training=True)
+        mix_feat = mix_losses.pop('features')
         mix_losses = add_prefix(mix_losses, 'mix')
         mix_loss, mix_log_vars = self._parse_losses(mix_losses)
         log_vars.update(mix_log_vars)
         mix_loss.backward()
+        # mmcv.print_log(f"train on mixed images {mix_loss}\n")
+        # mmcv.print_log(f"train on mixed images {mix_log_vars}\n")
 
+        
         if self.local_iter % self.debug_img_interval == 0:
             out_dir = os.path.join(self.train_cfg['work_dir'],
                                    'class_mix_debug')
@@ -379,6 +472,8 @@ class DACS(UDADecorator):
                     os.path.join(out_dir,
                                  f'{(self.local_iter + 1):06d}_{j}.png'))
                 plt.close()
+        
         self.local_iter += 1
 
         return log_vars
+

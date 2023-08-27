@@ -17,6 +17,7 @@ class GTADataset(CustomDataset):
         assert kwargs.get('split') in [None, 'train']
         if 'split' in kwargs:
             kwargs.pop('split')
+            print("Init GTADataset")
         super(GTADataset, self).__init__(
             img_suffix='.png',
             seg_map_suffix='_labelTrainIds.png',
